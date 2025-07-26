@@ -8,6 +8,7 @@ from pymongo import MongoClient
 from datetime import datetime
 import re
 from models.conversation import ConversationManager
+from services.chat_service import ChatbotService
 from bson import ObjectId, json_util
 
 load_dotenv()
@@ -22,7 +23,6 @@ conversation_manager = ConversationManager()
 # MongoDB Connection
 def get_mongodb_client():
     """Get MongoDB client connection"""
-    # Use MongoDB Atlas or local MongoDB
     mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
     client = MongoClient(mongodb_uri)
     return client
@@ -48,291 +48,11 @@ def get_collections():
     }
 
 
-# Chatbot Logic
-class ChatbotService:
-    def __init__(self):
-        self.collections = get_collections()
-
-    def process_query(self, query):
-        query_lower = query.lower()
-
-        # Handle product stock queries
-        if "stock" in query_lower or "left" in query_lower:
-            return self.handle_stock_query(query)
-
-        # Handle order status queries
-        elif "order" in query_lower and "status" in query_lower:
-            return self.handle_order_status_query(query)
-
-        # Handle top products queries
-        elif "top" in query_lower and (
-            "product" in query_lower or "sold" in query_lower
-        ):
-            return self.handle_top_products_query(query)
-
-        # Handle general product queries
-        elif "product" in query_lower:
-            return self.handle_product_query(query)
-
-        # Handle category queries
-        elif "category" in query_lower or "department" in query_lower:
-            return self.handle_category_query(query)
-
-        else:
-            return {
-                "response": "I can help you with product information, order status, stock queries, and category searches. Please ask me about products, orders, stock levels, or categories.",
-                "type": "general",
-            }
-
-    def handle_stock_query(self, query):
-        # Extract product name from query
-        words = query.split()
-        product_name = None
-
-        for i, word in enumerate(words):
-            if word.lower() in ["stock", "left", "quantity"] and i > 0:
-                product_name = " ".join(words[:i])
-                break
-
-        if not product_name:
-            return {
-                "response": "Please specify which product you'd like to check stock for.",
-                "type": "stock_query",
-            }
-
-        # Search for product in inventory (available stock)
-        pipeline = [
-            {
-                "$match": {
-                    "product_name": {"$regex": product_name, "$options": "i"},
-                    "sold_at": {"$exists": False},  # Not sold = in stock
-                }
-            },
-            {
-                "$group": {
-                    "_id": {
-                        "product_name": "$product_name",
-                        "product_brand": "$product_brand",
-                        "product_retail_price": "$product_retail_price",
-                    },
-                    "stock_count": {"$sum": 1},
-                }
-            },
-            {"$limit": 1},
-        ]
-
-        result = list(self.collections["inventory_items"].aggregate(pipeline))
-
-        if result:
-            product_data = result[0]["_id"]
-            stock_count = result[0]["stock_count"]
-
-            return {
-                "response": f"{product_data['product_name']} ({product_data['product_brand']}) has {stock_count} units left in stock at ${product_data['product_retail_price']:.2f} each.",
-                "type": "stock_response",
-                "product": {
-                    "name": product_data["product_name"],
-                    "brand": product_data["product_brand"],
-                    "stock": stock_count,
-                    "price": product_data["product_retail_price"],
-                },
-            }
-        else:
-            return {
-                "response": f"I couldn't find any stock for products matching '{product_name}'. Please check the product name and try again.",
-                "type": "stock_response",
-            }
-
-    def handle_order_status_query(self, query):
-        # Extract order ID from query
-        order_id_match = re.search(r"order\s+(?:id\s+)?(\d+)", query, re.IGNORECASE)
-
-        if order_id_match:
-            order_id = order_id_match.group(1)
-            order = self.collections["orders"].find_one({"order_id": order_id})
-
-            if order:
-                return {
-                    "response": f"Order {order_id} status: {order['status']}. Items: {order['num_of_item']}, Created: {order['created_at']}",
-                    "type": "order_status",
-                    "order": {
-                        "id": order["order_id"],
-                        "status": order["status"],
-                        "num_of_item": order["num_of_item"],
-                        "created_at": order["created_at"],
-                        "shipped_at": order.get("shipped_at"),
-                        "delivered_at": order.get("delivered_at"),
-                    },
-                }
-            else:
-                return {
-                    "response": f"Order {order_id} not found. Please check the order ID and try again.",
-                    "type": "order_status",
-                }
-        else:
-            return {
-                "response": "Please provide an order ID to check the status.",
-                "type": "order_status",
-            }
-
-    def handle_top_products_query(self, query):
-        # Get top products by sales (completed orders)
-        pipeline = [
-            {"$match": {"sold_at": {"$exists": True, "$ne": None}}},  # Only sold items
-            {
-                "$group": {
-                    "_id": {
-                        "product_name": "$product_name",
-                        "product_brand": "$product_brand",
-                        "product_retail_price": "$product_retail_price",
-                    },
-                    "sold_count": {"$sum": 1},
-                }
-            },
-            {"$sort": {"sold_count": -1}},
-            {"$limit": 5},
-        ]
-
-        sold_products = list(self.collections["inventory_items"].aggregate(pipeline))
-
-        if sold_products:
-            response = "Top 5 most sold products:\n"
-            for i, product in enumerate(sold_products, 1):
-                product_data = product["_id"]
-                response += f"{i}. {product_data['product_name']} ({product_data['product_brand']}) - ${product_data['product_retail_price']:.2f} (Sold: {product['sold_count']})\n"
-
-            return {
-                "response": response,
-                "type": "top_products",
-                "products": [
-                    {
-                        "name": p["_id"]["product_name"],
-                        "brand": p["_id"]["product_brand"],
-                        "price": p["_id"]["product_retail_price"],
-                        "sold_count": p["sold_count"],
-                    }
-                    for p in sold_products
-                ],
-            }
-        else:
-            return {
-                "response": "No sales data found in the database.",
-                "type": "top_products",
-            }
-
-    def handle_product_query(self, query):
-        # Search for products in inventory
-        pipeline = [
-            {"$match": {"product_name": {"$regex": query, "$options": "i"}}},
-            {
-                "$group": {
-                    "_id": {
-                        "product_name": "$product_name",
-                        "product_brand": "$product_brand",
-                        "product_retail_price": "$product_retail_price",
-                        "product_category": "$product_category",
-                    },
-                    "total_items": {"$sum": 1},
-                    "available_stock": {
-                        "$sum": {"$cond": [{"$eq": ["$sold_at", None]}, 1, 0]}
-                    },
-                }
-            },
-            {"$limit": 5},
-        ]
-
-        inventory_items = list(self.collections["inventory_items"].aggregate(pipeline))
-
-        if inventory_items:
-            response = f"Found {len(inventory_items)} product(s):\n"
-            for item in inventory_items:
-                product_data = item["_id"]
-                response += f"- {product_data['product_name']} ({product_data['product_brand']}): ${product_data['product_retail_price']:.2f} (Available: {item['available_stock']})\n"
-
-            return {
-                "response": response,
-                "type": "product_search",
-                "products": [
-                    {
-                        "name": item["_id"]["product_name"],
-                        "brand": item["_id"]["product_brand"],
-                        "price": item["_id"]["product_retail_price"],
-                        "category": item["_id"]["product_category"],
-                    }
-                    for item in inventory_items
-                ],
-            }
-        else:
-            return {
-                "response": f"No products found matching '{query}'.",
-                "type": "product_search",
-            }
-
-    def handle_category_query(self, query):
-        # Extract category from query
-        category_match = re.search(
-            r"(?:in|for|show)\s+(?:the\s+)?(\w+(?:\s+\w+)*?)(?:\s+category|department|products)",
-            query,
-            re.IGNORECASE,
-        )
-
-        if category_match:
-            category = category_match.group(1)
-
-            pipeline = [
-                {"$match": {"product_category": {"$regex": category, "$options": "i"}}},
-                {
-                    "$group": {
-                        "_id": {
-                            "product_name": "$product_name",
-                            "product_brand": "$product_brand",
-                            "product_retail_price": "$product_retail_price",
-                        },
-                        "available_stock": {
-                            "$sum": {"$cond": [{"$eq": ["$sold_at", None]}, 1, 0]}
-                        },
-                    }
-                },
-                {"$limit": 10},
-            ]
-
-            products = list(self.collections["inventory_items"].aggregate(pipeline))
-
-            if products:
-                response = f"Products in {category} category:\n"
-                for product in products:
-                    product_data = product["_id"]
-                    response += f"- {product_data['product_name']} ({product_data['product_brand']}): ${product_data['product_retail_price']:.2f} (Available: {product['available_stock']})\n"
-
-                return {
-                    "response": response,
-                    "type": "category_search",
-                    "products": [
-                        {
-                            "name": p["_id"]["product_name"],
-                            "brand": p["_id"]["product_brand"],
-                            "price": p["_id"]["product_retail_price"],
-                        }
-                        for p in products
-                    ],
-                }
-            else:
-                return {
-                    "response": f"No products found in the {category} category.",
-                    "type": "category_search",
-                }
-        else:
-            return {
-                "response": "Please specify which category you'd like to browse.",
-                "type": "category_search",
-            }
-
-
 # API Routes
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """Main chat endpoint with conversation management"""
+    """Main chat endpoint with LLM conversation management"""
     data = request.get_json()
     query = data.get("message", "")
     user_id = data.get("user_id", "anonymous")
@@ -355,9 +75,10 @@ def chat():
             {"ip": request.remote_addr}
         )
         
-        # Get chatbot response
-        chatbot = ChatbotService()
-        response = chatbot.process_query(query)
+        # Get LLM-powered chatbot response
+        collections = get_collections()
+        chatbot = ChatbotService(collections, conversation_manager)
+        response = chatbot.process_query(query, conversation_id)
         
         # Save assistant response
         conversation_manager.add_message(
