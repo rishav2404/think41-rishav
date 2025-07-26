@@ -11,7 +11,7 @@ const Header = ({ onToggleSidebar, isConnected }) => {
         >
           <Menu className="w-5 h-5" />
         </button>
-        
+
         <div className="flex items-center space-x-2">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
             <Bot className="w-5 h-5 text-white" />
@@ -24,11 +24,10 @@ const Header = ({ onToggleSidebar, isConnected }) => {
       </div>
 
       <div className="flex items-center space-x-2">
-        <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${
-          isConnected 
-            ? 'bg-green-100 text-green-700' 
+        <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${isConnected
+            ? 'bg-green-100 text-green-700'
             : 'bg-red-100 text-red-700'
-        }`}>
+          }`}>
           {isConnected ? (
             <Wifi className="w-3 h-3" />
           ) : (

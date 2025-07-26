@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @layer base {
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  
   html {
     font-family: 'Inter', system-ui, sans-serif;
   }
@@ -8,12 +14,20 @@
   body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+  }
+  
+  /* Prevent zoom on mobile inputs */
+  @media screen and (max-width: 768px) {
+    input, textarea, select {
+      font-size: 16px;
+    }
   }
 }
 
 @layer components {
   .chat-bubble {
-    @apply max-w-xs lg:max-w-md px-4 py-2 rounded-lg shadow-sm;
+    @apply max-w-xs sm:max-w-sm lg:max-w-md px-3 sm:px-4 py-2 rounded-lg shadow-sm;
   }
   
   .chat-bubble-user {
@@ -53,12 +67,8 @@
   }
   
   @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
   
   @keyframes slideUp {
@@ -70,5 +80,12 @@
       transform: translateY(0);
       opacity: 1;
     }
+  }
+}
+
+/* Mobile viewport fix */
+@supports (-webkit-touch-callout: none) {
+  .h-screen {
+    height: -webkit-fill-available;
   }
 }
